@@ -7,6 +7,7 @@ from graph.state import (
     submit_answer,
 )
 from agents.evaluator_agent import evaluate_answer
+from agents.report_generator_agent import generate_report
 
 
 def get_next_question(state: InterviewState) -> Dict[str, Any]:
@@ -90,3 +91,38 @@ def get_interview_progress(state: InterviewState) -> Dict[str, Any]:
         "total": len(state["questions"]),
         "is_complete": is_interview_complete(state),
     }
+
+
+def finalize_interview(
+    state: InterviewState,
+    llm_client,
+    model: str,
+) -> Optional[Dict[str, Any]]:
+    """
+    Agar interview complete ho chuka hai, final report generate karta hai
+    (agar pehle se generate nahi hua), aur state["report"] mein save kar deta hai.
+
+    Agar interview abhi complete nahi hua, None return karta hai — koi error nahi,
+    bas signal hai "abhi report ready nahi hai."
+
+    Idempotent hai: agar report pehle se ban chuka hai (state["report"] khali nahi hai),
+    dobara LLM call nahi karta, seedha existing report return kar deta hai.
+    """
+    if not is_interview_complete(state):
+        return None
+
+    if state["report"]:
+        # Pehle se generate ho chuka hai, dobara LLM call ki zaroorat nahi
+        return state["report"]
+
+    report = generate_report(
+        questions=state["questions"],
+        answers=state["answers"],
+        evaluations=state["evaluations"],
+        gap_analysis=state["gap_analysis"],
+        llm_client=llm_client,
+        model=model,
+    )
+
+    state["report"] = report
+    return report

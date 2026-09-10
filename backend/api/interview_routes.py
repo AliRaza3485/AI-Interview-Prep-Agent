@@ -12,6 +12,7 @@ from graph.interview_loop import (
     get_next_question,
     process_answer,
     get_interview_progress,
+    finalize_interview,
 )
 
 router = APIRouter()
@@ -65,6 +66,18 @@ class SubmitAnswerResponse(BaseModel):
     next_question: Optional[Dict[str, Any]]
     question_number: Optional[int]
     total_questions: int
+
+
+class ReportResponse(BaseModel):
+    overall_score: float
+    readiness_level: str
+    category_breakdown: Dict[str, Any]
+    gaps_addressed: List[str]
+    gaps_still_open: List[str]
+    key_strengths: List[str]
+    key_weaknesses: List[str]
+    recommendation_summary: str
+    question_breakdown: List[Dict[str, Any]]
 
 
 # ---------- Helper ----------
@@ -155,3 +168,34 @@ def submit_answer_route(payload: SubmitAnswerRequest):
         "question_number": next_q["question_number"],
         "total_questions": next_q["total_questions"],
     }
+
+
+@router.post("/interview/report", response_model=ReportResponse)
+def get_interview_report(payload: SessionIdRequest):
+    """
+    Diye gaye session ka final report generate/return karta hai.
+    Agar interview abhi complete nahi hua, HTTP 400 error deta hai.
+    """
+    state = _get_session_or_404(payload.session_id)
+
+    report = finalize_interview(
+        state=state,
+        llm_client=llm_client,
+        model=settings.GROQ_MODEL,
+    )
+
+    if report is None:
+        progress = get_interview_progress(state)
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Interview not yet complete. "
+                f"{progress['answered']} of {progress['total']} questions answered."
+            ),
+        )
+
+    # state["report"] finalize_interview() ke andar already set ho chuka hai,
+    # session store mein wapas save kar dete hain taake future calls cached mile
+    SESSIONS[payload.session_id] = state
+
+    return report
