@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from config import settings
 from parsers.llm_client import GroqLLMClient
 from parsers.resume_parser import extract_text, structure_resume, ResumeParseError
+from session_store import save_session, load_session, session_lock
 from parsers.jd_parser import structure_jd, JDParseError
 from graph.state import InterviewState, get_initial_state
 from graph.interview_graph import app_graph
@@ -206,26 +207,32 @@ def submit_answer_route(payload: SubmitAnswerRequest):
     """
     Candidate ka answer submit karta hai: evaluate karta hai, state update karta hai,
     aur agla question (ya completion status) return karta hai.
+
+    session_lock() ke andar hai kyunke yeh ek read-modify-write sequence hai
+    (load -> mutate -> save). Bina lock ke, agar isi session_id ke liye do
+    requests ek saath aa jayein, dono purana state padh lengi aur ek
+    doosre ka update overwrite kar degi (lost update race condition).
     """
-    state = _get_session_or_404(payload.session_id)
+    with session_lock(payload.session_id):
+        state = _get_session_or_404(payload.session_id)
 
-    if get_interview_progress(state)["is_complete"]:
-        raise HTTPException(status_code=400, detail="Interview already complete.")
+        if get_interview_progress(state)["is_complete"]:
+            raise HTTPException(status_code=400, detail="Interview already complete.")
 
-    evaluations_before = len(state["evaluations"])
+        evaluations_before = len(state["evaluations"])
 
-    state = process_answer(
-        state=state,
-        answer=payload.answer,
-        llm_client=llm_client,
-        model=settings.GROQ_MODEL,
-    )
+        state = process_answer(
+            state=state,
+            answer=payload.answer,
+            llm_client=llm_client,
+            model=settings.GROQ_MODEL,
+        )
 
-    latest_evaluation = state["evaluations"][evaluations_before]
+        latest_evaluation = state["evaluations"][evaluations_before]
 
-    save_session(payload.session_id, state)
+        save_session(payload.session_id, state)
 
-    next_q = get_next_question(state)
+        next_q = get_next_question(state)
 
     return {
         "evaluation": latest_evaluation,
@@ -241,25 +248,29 @@ def get_interview_report(payload: SessionIdRequest):
     """
     Diye gaye session ka final report generate/return karta hai.
     Agar interview abhi complete nahi hua, HTTP 400 error deta hai.
+
+    session_lock() ke andar hai taake report generation submit-answer
+    ke saath race condition na kare agar dono ek saath aa jayein.
     """
-    state = _get_session_or_404(payload.session_id)
+    with session_lock(payload.session_id):
+        state = _get_session_or_404(payload.session_id)
 
-    report = finalize_interview(
-        state=state,
-        llm_client=llm_client,
-        model=settings.GROQ_MODEL,
-    )
-
-    if report is None:
-        progress = get_interview_progress(state)
-        raise HTTPException(
-            status_code=400,
-            detail=(
-                f"Interview not yet complete. "
-                f"{progress['answered']} of {progress['total']} questions answered."
-            ),
+        report = finalize_interview(
+            state=state,
+            llm_client=llm_client,
+            model=settings.GROQ_MODEL,
         )
 
-    save_session(payload.session_id, state)
+        if report is None:
+            progress = get_interview_progress(state)
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Interview not yet complete. "
+                    f"{progress['answered']} of {progress['total']} questions answered."
+                ),
+            )
+
+        save_session(payload.session_id, state)
 
     return report
