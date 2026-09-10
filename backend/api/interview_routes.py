@@ -19,17 +19,12 @@ from graph.interview_loop import (
     get_interview_progress,
     finalize_interview,
 )
+from session_store import save_session, load_session
 
 router = APIRouter()
 
 # Shared LLM client, jaisa analyze_routes.py mein hai
 llm_client = GroqLLMClient(api_key=settings.GROQ_API_KEY)
-
-# Simple in-memory session store.
-# Key: session_id (str), Value: InterviewState
-# NOTE: Yeh server restart hone pe khatam ho jata hai. Production mein isse
-# database ya Redis se replace karna hoga, abhi Day 3 ke liye kaafi hai.
-SESSIONS: Dict[str, InterviewState] = {}
 
 
 # ---------- Request/Response Schemas ----------
@@ -100,7 +95,7 @@ class ReportResponse(BaseModel):
 
 
 def _get_session_or_404(session_id: str) -> InterviewState:
-    state = SESSIONS.get(session_id)
+    state = load_session(session_id)
     if state is None:
         raise HTTPException(status_code=404, detail="Session not found")
     return state
@@ -118,12 +113,6 @@ async def begin_interview(
     Single entry point: raw resume file + raw JD text leke,
     khud parsing -> gap analysis -> question generation -> session creation
     sab kar deta hai ek hi call mein.
-
-    Design decision: yeh /parse/resume, /parse/jd, aur /interview/start ko
-    REPLACE nahi karta -- unko chain karta hai. Woh teeno endpoints reusable
-    rehte hain (jaise koi sirf gap-analysis dekhna chahe bina interview
-    shuru kiye), yeh naya route sirf ek convenience wrapper hai jo
-    poore demo flow ko ek call mein wire karta hai.
     """
     suffix = Path(file.filename).suffix.lower()
     if suffix not in (".pdf", ".docx"):
@@ -156,7 +145,7 @@ async def begin_interview(
         )
 
     session_id = str(uuid.uuid4())
-    SESSIONS[session_id] = result_state
+    save_session(session_id, result_state)
 
     next_q = get_next_question(result_state)
 
@@ -188,7 +177,7 @@ def start_interview(payload: StartInterviewRequest):
         )
 
     session_id = str(uuid.uuid4())
-    SESSIONS[session_id] = result_state
+    save_session(session_id, result_state)
 
     next_q = get_next_question(result_state)
 
@@ -234,7 +223,7 @@ def submit_answer_route(payload: SubmitAnswerRequest):
 
     latest_evaluation = state["evaluations"][evaluations_before]
 
-    SESSIONS[payload.session_id] = state
+    save_session(payload.session_id, state)
 
     next_q = get_next_question(state)
 
@@ -271,6 +260,6 @@ def get_interview_report(payload: SessionIdRequest):
             ),
         )
 
-    SESSIONS[payload.session_id] = state
+    save_session(payload.session_id, state)
 
     return report
