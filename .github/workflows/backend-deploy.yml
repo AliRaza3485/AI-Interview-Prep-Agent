@@ -46,6 +46,14 @@ jobs:
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
+            set -e
+            echo "===== CONNECTED TO ====="
+            hostname -I
+            curl -s ifconfig.me
+            echo ""
+            echo "===== ENV FILE CHECK ====="
+            ls -la /home/${{ secrets.EC2_USER }}/backend.env
+            echo "===== PULLING IMAGE ====="
             docker pull ${{ secrets.DOCKERHUB_USERNAME }}/ai-interview-prep-agent:latest
             docker stop ai-interview-prep-agent || true
             docker rm ai-interview-prep-agent || true
@@ -56,3 +64,5 @@ jobs:
               --env-file /home/${{ secrets.EC2_USER }}/backend.env \
               ${{ secrets.DOCKERHUB_USERNAME }}/ai-interview-prep-agent:latest
             docker image prune -f
+            echo "===== FINAL STATUS ====="
+            docker ps
