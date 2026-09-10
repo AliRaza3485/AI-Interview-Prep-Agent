@@ -40,3 +40,38 @@ def get_initial_state(resume_data: dict, jd_data: dict) -> InterviewState:
         evaluations=[],
         report={},
     )
+
+
+def is_interview_complete(state: InterviewState) -> bool:
+    """
+    Batata hai ke saare questions ho chuke hain ya abhi baaki hain.
+    True agar current_question_idx questions list ke size ke barabar ya zyada ho jaye.
+    """
+    return state["current_question_idx"] >= len(state["questions"])
+
+
+def get_current_question(state: InterviewState) -> dict | None:
+    """
+    Abhi jo question active hai, wo return karta hai.
+    Agar interview complete ho chuka ho (saare questions ho chuke), None return karta hai.
+    """
+    if is_interview_complete(state):
+        return None
+    return state["questions"][state["current_question_idx"]]
+
+
+def submit_answer(state: InterviewState, answer: str) -> InterviewState:
+    """
+    User ka answer state mein save karta hai aur agle question ke liye
+    current_question_idx aage badha deta hai.
+
+    Note: Yeh sirf answer ko store karta hai. Evaluation (answer ka score/feedback)
+    alag se Evaluator Agent karega (Step 2 mein banayenge).
+    """
+    if is_interview_complete(state):
+        # Agar already complete ho chuka hai, kuch mat karo (safety check)
+        return state
+
+    state["answers"].append(answer)
+    state["current_question_idx"] += 1
+    return state
